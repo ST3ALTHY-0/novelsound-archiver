@@ -25,6 +25,29 @@ NovelSound Archiver uses NovelSound's backend API to build a local catalog, can 
 - Audiobookshelf-friendly directory layout
 - Fallback to `Unknown Author` when author metadata is unavailable
 
+## Environment Variables
+
+Authentication is handled through environment variables so credentials aren't stored in the scripts.
+
+```bash
+# NovelSound API authentication
+export NOVELSOUND_TOKEN='Bearer YOUR_TOKEN'
+
+# Audiobookshelf metadata authentication
+export ABS_TOKEN='YOUR_ABS_API_TOKEN'
+
+# Optional — defaults to http://localhost:13378
+export ABS_URL='http://localhost:13378'
+```
+
+The NovelSound token can be found in your browser's **DevTools → Network → Request Headers → Authorization** while logged in.
+
+The Audiobookshelf API token can be obtained from your ABS user settings.
+
+To make these persistent, add the `export` commands to `~/.bashrc` or `~/.zshrc`.
+
+**Never commit tokens or API keys to Git.**
+
 ## Requirements
 
 - Python 3
