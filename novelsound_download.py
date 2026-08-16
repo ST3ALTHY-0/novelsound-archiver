@@ -16,11 +16,11 @@ DEFAULT_OUTPUT = "Audiobooks"
 
 
 def sanitize(name):
-    """Make a string safe for use as a Linux filename."""
+    """Make a string safe for use as a filename on Linux and NTFS."""
     name = name.strip()
 
-    # Replace path separators/control chars
-    name = re.sub(r'[/\x00-\x1f]', "_", name)
+    # Replace characters that are invalid on NTFS and path separators/control chars.
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
 
     # Collapse whitespace
     name = re.sub(r"\s+", " ", name)
@@ -121,6 +121,45 @@ def get_extension(url):
     return ".mp3"
 
 
+def get_book_name(chapter):
+    # Best source: matched Audible metadata
+    audible_title = chapter.get(
+        "audible_title"
+    )
+
+    if audible_title:
+        return sanitize(
+            audible_title
+        )
+
+    # Second choice: descriptive audio filename
+    url = chapter.get(
+        "audio_url",
+        ""
+    )
+
+    if url:
+        path = unquote(
+            urlparse(url).path
+        )
+
+        filename = Path(path).name
+        stem = Path(filename).stem.strip()
+
+        if stem and not re.fullmatch(
+            r"(book|volume|vol\.?|chapter)\s*0*\d+",
+            stem,
+            re.IGNORECASE,
+        ):
+            return sanitize(stem)
+
+    # Final fallback
+    return sanitize(
+        chapter.get("title")
+        or f"Chapter {chapter.get('id')}"
+    )
+
+
 def chapter_path(output_dir, series, chapter, library_layout=False):
     series_title = sanitize(
         series.get("audible_series")
@@ -128,10 +167,7 @@ def chapter_path(output_dir, series, chapter, library_layout=False):
         or f"Series {series.get('id')}"
     )
 
-    chapter_title = sanitize(
-        chapter.get("title")
-        or f"Chapter {chapter.get('id')}"
-    )
+    book_name = get_book_name(chapter)
 
     extension = get_extension(
         chapter.get("audio_url", "")
@@ -147,7 +183,7 @@ def chapter_path(output_dir, series, chapter, library_layout=False):
             output_dir
             / author
             / series_title
-            / chapter_title
+            / book_name
         )
 
     else:
@@ -156,7 +192,7 @@ def chapter_path(output_dir, series, chapter, library_layout=False):
             / series_title
         )
 
-    return folder / f"{chapter_title}{extension}"
+    return folder / f"{book_name}{extension}"
 
 
 def download_file( series,
@@ -226,7 +262,7 @@ def download_file( series,
                 if chunk:
                     f.write(chunk)
 
-        part_path.rename(final_path)
+        part_path.replace(final_path)
 
         return "done", series, chapter, final_path
 
