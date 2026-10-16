@@ -1,26 +1,10 @@
 # NovelSound Auto Downloader
 
-Fetch a NovelSound (NS) catalog, download audio, and optionally enrich the catalog with author and Audible metadata.
+Fetch the NovelSound catalog, download audio, track completed downloads across drives, and optionally enrich titles with author and Audible metadata.
 
-## Which script should I use?
+## Quick start
 
-| Script | Purpose |
-| --- | --- |
-| `fetch_novelsound_catalog.py` | Fetch the catalog from the NovelSound API and export full JSON plus simplified JSON/CSV. |
-| `download_all_with_manifest.py` | Download the whole catalog with a persistent SQLite record of completed downloads. Recommended for continuing downloads across multiple drives. |
-| `download_all_simple.py` | Download the whole catalog, skipping files already present at the destination. No database. |
-| `download_novelsound_series.py.py` | Download selected series by title or ID, a list of series, or the entire catalog. Supports partial download resumption and an optional Author/Series/Book layout. |
-| `Extra/get_author.py` | Look up authors using Google Books and Open Library. |
-| `Extra/novelsound_abs_metadata.py` | Add series-level metadata using Audiobookshelf's Audible search. |
-| `Extra/novelsound_abs_books.py` | Match individual book entries to Audible metadata through Audiobookshelf. |
-
-The double `.py.py` extension above is the current filename; use it as written. Earlier names mentioned in commands or editor tabs include `better_crawler.py`, `novelsound_download.py`, and `download_all_manifest.py`. The examples here use the files currently on disk.
-
-The `fullAudioBooks/` directory contains a separate workflow for FullAudioBooks, rather than NovelSound.
-
-## Setup
-
-Run commands from the project directory so relative catalog, cache, and database paths resolve consistently:
+Run commands from the project directory:
 
 ```bash
 cd /home/luke/NovelSoundAutoDownloader
@@ -29,32 +13,26 @@ source .venv/bin/activate
 python3 -m pip install requests
 ```
 
-The scripts use Python 3, `requests`, and Python's standard library. The bulk downloaders also import `urllib3`, which is installed with `requests`. SQLite support comes from Python's `sqlite3` module.
+In later terminals, run `source .venv/bin/activate`. Python's standard library provides SQLite; `requests` installs `urllib3`. The `-u` flag makes Python print output immediately.
 
-Activate the virtual environment again in each new terminal. Use `python3 -u` for immediately flushed terminal output.
-
-## 1. Fetch or refresh the catalog
-
-Supply your NovelSound authorization header value in an environment variable:
+### 1. Fetch the catalog
 
 ```bash
 export NOVELSOUND_TOKEN='YOUR_AUTHORIZATION_HEADER_VALUE'
 python3 -u fetch_novelsound_catalog.py
 ```
 
-The script sends this value directly as the `Authorization` header; it does not add a prefix. It fetches pages of 100 series until the catalog ends. There are no command-line options, and running it fetches data immediately.
+The token is sent **unchanged** as the `Authorization` header (no prefix is added). The script fetches up to 100 series per page until finished and overwrites:
 
-It overwrites these files in the current directory:
-
-| File | Contents |
+| File | Purpose |
 | --- | --- |
-| `novelsound_full.json` | Full API records, including chapters and audio URLs. **Use this for downloading.** |
-| `novelsound_catalog.json` | Simplified series summaries for browsing. |
-| `novelsound_catalog.csv` | Simplified catalog for a spreadsheet. |
+| `novelsound_full.json` | Complete records, chapters, and audio URLs; **use for downloads** |
+| `novelsound_catalog.json` | Simplified series list |
+| `novelsound_catalog.csv` | Simplified spreadsheet export |
 
-The simplified exports omit chapter records and audio URLs, so they cannot supply the download jobs. The downloaders read URLs from the full catalog and do not read `NOVELSOUND_TOKEN` themselves.
+The simplified exports do not contain audio URLs. Download scripts read URLs from the full catalog and do not need `NOVELSOUND_TOKEN`.
 
-## 2. Download with the manifest
+### 2. Download the catalog (recommended)
 
 ```bash
 python3 -u download_all_with_manifest.py \
@@ -65,24 +43,24 @@ python3 -u download_all_with_manifest.py \
   --workers 3
 ```
 
-The downloader records completed chapters in `novelsound_downloads.db`. On a later run, it checks this database before checking the destination and skips recorded chapters even when the destination changes. Nonempty files already at the expected destination are also recorded as complete.
+The SQLite manifest remembers completed audio entries across runs and drives. Existing nonempty files at the expected destination are also recorded. Rerunning retries failures without redownloading recorded entries.
 
-Files use this layout, with titles sanitized for filenames:
+Files are stored as:
 
 ```text
 NovelSound/
-  123 - Example Series/
-    001 - Book 1.mp3
-    002 - Book 2.mp3
+â””â”€â”€ 123 - Example Series/
+    â”œâ”€â”€ 001 - Book 1.mp3
+    â””â”€â”€ 002 - Book 2.mp3
 ```
 
-The extension is inferred from the audio URL, with `.mp3` as the fallback. NovelSound's `chapters` entries may represent whole books or other audio groupings.
+Names are sanitized; the extension comes from the URL (default `.mp3`). A NovelSound chapter may represent a full book or another audio grouping.
 
-### Existing downloads and a second HDD
+## Using multiple drives
 
-If the old downloads are already recorded in the same manifest, run the command above with the new destination. No bootstrap is needed.
+**Already used this manifest?** Keep the same `novelsound_downloads.db` and change `--dest` to the new drive. No additional setup is needed.
 
-If the original downloads were made without this manifest, register them first. Point `--dest` at the **old library root** containing the `ID - Series Title` folders:
+**Downloaded files before creating the manifest?** Register existing files on the old drive first:
 
 ```bash
 python3 -u download_all_with_manifest.py \
@@ -92,35 +70,20 @@ python3 -u download_all_with_manifest.py \
   --bootstrap
 ```
 
-Replace the old drive path if your files are elsewhere. Bootstrap scans the expected folder and filename layout and records nonempty files; it does not download audio. It skips entries already marked complete. You can repeat it for additional library roots using the same database, then download the remainder to the new drive.
+`--bootstrap` scans the bulk downloader's expected `ID - Series Title` folders, registers nonempty files, and exits **without downloading**. Repeat for other existing roots, using the same database, then download remaining entries to the new destination.
 
-Important behavior:
+**Important limitations:**
 
-- Keep using the same manifest across drives. A new database will not know about files on another drive.
-- Completed manifest entries are trusted without checking whether their original files still exist. Moving files preserves the skip behavior; deleting files does not automatically make them download again.
-- Bootstrap requires the bulk downloader's exact naming layout. The selected-series downloader uses a different layout and cannot generally be bootstrapped this way.
-- The manifest identifies chapters using series ID, chapter ID when available, chapter index, and the audio URL with query string and fragment removed. Changes to chapter ordering or URL paths can cause an entry to be treated as new.
-- The script currently creates every processed series folder before checking the manifest. A book already completed on the first drive can therefore leave an **empty folder on the second drive**. A partially completed series may be split between drives.
+- Completed manifest entries are trusted even if their original files have been moved or deleted.
+- The selected-series downloader uses a different naming layout; its files generally cannot be bootstrapped this way.
+- Entries are identified using series ID, chapter ID (when available), chapter index, and URL path without query/fragment. Changes to chapter order or URL path can result in new entries.
+- The manifest downloader creates series folders before checking completion, so a second drive may contain empty folders; a partially downloaded series may be split between drives.
 
-### Manifest downloader options
+## Download individual series
 
-| Option | Default / behavior |
-| --- | --- |
-| `--input`, `-i` | `novelsound_full.json` |
-| `--dest`, `-d` | Required destination root. |
-| `--manifest` | `novelsound_downloads.db` |
-| `--log-file` | `download_failures.log`; appends failed chapter records as JSON Lines. |
-| `--workers`, `-w` | `6`; caps concurrent series processing. |
-| `--series-workers` | `3`; actual concurrency is at least 1 and otherwise the smaller of this and `--workers`. Audio entries within each series download sequentially. |
-| `--skip-if-status` | `all`; despite its name, `complete` **includes only complete series**, and `ongoing` includes only ongoing series. |
-| `--bootstrap` | Register existing nonempty files and exit without downloading. |
-| `--debug` | Show requests, HTTP status, and periodic download progress. |
+The filename really is **`download_novelsound_series.py.py`** (double extension).
 
-Rerun the same command to retry failed entries; failures are not marked complete. Downloads use `.part` files, but interrupted partial files are restarted rather than resumed. The log is append-only, so an earlier failure remains in it after a successful retry.
-
-## 3. Download selected series
-
-Preview a selection by title before downloading:
+Preview a title match without downloading:
 
 ```bash
 python3 download_novelsound_series.py.py \
@@ -129,23 +92,18 @@ python3 download_novelsound_series.py.py \
   --dry-run
 ```
 
-Remove `--dry-run` to download. Titles are matched case-insensitively, using an exact match first and then a unique partial match. Use a numeric ID when a title is ambiguous:
+Remove `--dry-run` to download. Matching is case-insensitive: exact titles first, then unique partial matches. Use a numeric ID if a title is ambiguous.
+
+Download several IDs:
 
 ```bash
 python3 -u download_novelsound_series.py.py \
-  --series 123 \
-  --series 456 \
+  --series 123 --series 456 \
   --output ./Audiobooks \
   --workers 4
 ```
 
-The IDs above are examples; use IDs from your catalog. To select from a text file, put one title or numeric ID on each line. Blank lines and lines starting with `#` are ignored:
-
-```text
-# series.txt
-123
-Example Series
-```
+Or supply a text file (`series.txt`) with one title or ID per line; blank lines and `#` comments are ignored:
 
 ```bash
 python3 -u download_novelsound_series.py.py \
@@ -153,22 +111,15 @@ python3 -u download_novelsound_series.py.py \
   --output ./Audiobooks
 ```
 
-Choose one selection mode: repeated `--series`, `--series-file`, or `--all`.
+Choose **one** selection mode: repeated `--series`, `--series-file`, or `--all`.
 
-| Option | Default / behavior |
-| --- | --- |
-| `--catalog` | `novelsound_full.json`; also accepts an object containing an `items` list. |
-| `--output` | `Audiobooks` |
-| `--workers` | `4` concurrent audio downloads. |
-| `--timeout` | `60` seconds for HTTP requests. |
-| `--dry-run` | Print planned paths without downloading. |
-| `--library-layout` | Use `Author/Series/Book/audio.ext`. Missing authors become `Unknown Author`. |
+By default, output is `Series/Book.ext`. `--library-layout` instead uses `Author/Series/Book/audio.ext` (`Unknown Author` if absent). Book names prefer `audible_title`, then a descriptive URL filename, then chapter title; series names prefer `audible_series` when available.
 
-Normally files go under `Series/Book.ext`. Book names prefer chapter-level `audible_title`, then a descriptive audio URL filename, then the chapter title. Series names prefer `audible_series` when present.
+This downloader skips nonempty destination files and attempts to resume `.part` files with HTTP Range; it restarts when the server ignores Range. **It neither reads nor updates the SQLite manifest**, so it cannot detect completed downloads on another drive.
 
-This script skips nonempty destination files and attempts to resume existing `.part` files using HTTP Range requests. It restarts the file if the server ignores the Range request. **It does not consult or update the manifest**, so it does not know what you downloaded to a different drive.
+## Other download options
 
-## 4. Simple bulk downloader
+### Simple bulk downloader (no manifest)
 
 ```bash
 python3 -u download_all_simple.py \
@@ -177,23 +128,42 @@ python3 -u download_all_simple.py \
   --workers 3
 ```
 
-This uses the same `ID - Series Title/001 - Chapter Title.ext` layout as the manifest downloader. It skips nonempty files at that destination, retries failed requests, and restarts partial files. It has no cross-drive tracking or persistent failure log.
+Uses the same `ID - Series Title/001 - Chapter Title.ext` layout as the manifest downloader. Skips existing nonempty destination files, retries failed requests, and restarts partial files. It has no cross-drive history or persistent failure log; errors print to the terminal.
 
-Options are `--input` / `-i` (default `novelsound_full.json`), required `--dest` / `-d`, `--workers` / `-w` (default `6`), `--series-workers` (default `3`), and `--skip-if-status` (`all`, `complete`, or `ongoing`). Concurrency and status filtering behave as described for the manifest downloader. Errors are printed to the terminal.
+### Command reference
 
-## Optional: enrich the catalog
+| Option | Manifest bulk | Simple bulk | Selected series |
+| --- | --- | --- | --- |
+| Catalog input | `--input`, `-i` (default `novelsound_full.json`) | Same | `--catalog` (default `novelsound_full.json`; also accepts an object with `items`) |
+| Destination | `--dest`, `-d` (required) | Same | `--output` (default `Audiobooks`) |
+| Workers | `--workers`, `-w` (default 6) | Same | `--workers` (default 4 concurrent audio downloads) |
+| Series concurrency | `--series-workers` (default 3) | Same | â€” |
+| Status filter | `--skip-if-status` (default `all`) | Same | â€” |
+| Manifest database | `--manifest` (default `novelsound_downloads.db`) | â€” | â€” |
+| Failure log | `--log-file` (default `download_failures.log`) | â€” | â€” |
+| Existing-file import | `--bootstrap` | â€” | â€” |
+| Verbose requests | `--debug` | â€” | â€” |
+| Request timeout | â€” | â€” | `--timeout` (default 60 seconds) |
+| Preview | â€” | â€” | `--dry-run` |
+| Author layout | â€” | â€” | `--library-layout` |
 
-Run these helpers from the project root. Their input, output, and cache filenames are constants in the scripts; they do not have command-line options. They write enriched JSON catalogs, not audio tags or Audiobookshelf library records. Matches are based on title similarity and should be reviewed.
+For bulk downloaders, `--series-workers` limits concurrent series to at least 1 and at most `--workers`; entries within each series download sequentially. Increasing only `--workers` above 3 leaves the default series limit at 3. Status filters: `all` processes all; `complete` processes **only complete series**; `ongoing` processes **only ongoing series** (despite the option's name).
 
-### Authors from Google Books and Open Library
+Manifest failures are appended as JSON Lines; old failure records remain after a successful retry. Bulk `.part` downloads restart rather than resume. Use `--debug` to see requests, HTTP status, and periodic progress.
+
+## Optional metadata enrichment
+
+These helpers run from the project root, have fixed input/output/cache filenames, and do **not** accept command-line options. They enrich JSON catalogs, not audio tags or Audiobookshelf library records. Review title-similarity matches before relying on them.
+
+### Author lookup (Google Books / Open Library)
 
 ```bash
 python3 -u Extra/get_author.py
 ```
 
-Reads `novelsound_full.json`, writes `novelsound_full_with_authors.json`, and caches lookups in `authors_cache.json`. It preserves existing authors and stores match source and score for new matches. Cached misses are reused on later runs.
+Reads `novelsound_full.json`, writes `novelsound_full_with_authors.json`, and caches lookups in `authors_cache.json`. Existing authors are preserved; new matches include source and score. Cached misses are reused.
 
-Use its output with the selected-series downloader:
+To use the enriched authors for downloads:
 
 ```bash
 python3 -u download_novelsound_series.py.py \
@@ -203,9 +173,7 @@ python3 -u download_novelsound_series.py.py \
   --library-layout
 ```
 
-### Series and book metadata through Audiobookshelf
-
-Set the URL and API token for your Audiobookshelf server:
+### Audible metadata through Audiobookshelf
 
 ```bash
 export ABS_URL='http://localhost:13378'
@@ -214,18 +182,18 @@ python3 -u Extra/novelsound_abs_metadata.py
 python3 -u Extra/novelsound_abs_books.py
 ```
 
-`ABS_URL` defaults to `http://localhost:13378`; `ABS_TOKEN` is required. These scripts call the server's `/api/search/books` endpoint with the `audible` provider and a Bearer token.
+`ABS_URL` defaults to `http://localhost:13378`; `ABS_TOKEN` is required. Both helpers query `/api/search/books` with the `audible` provider and a Bearer token.
 
-| Helper | Input | Output | Cache |
+| Script | Input | Output | Cache |
 | --- | --- | --- | --- |
 | `Extra/novelsound_abs_metadata.py` | `novelsound_full.json` | `novelsound_full_with_metadata.json` | `abs_metadata_cache.json` |
 | `Extra/novelsound_abs_books.py` | `novelsound_full_with_metadata.json` | `novelsound_full_with_book_metadata.json` | `abs_book_metadata_cache.json` |
 
-The first helper adds series-level author, narrator, publisher, Audible series information, and match scores. It skips series that already have an author. The second matches chapter titles containing book/volume numbers to Audible sequence numbers and adds chapter-level `audible_*` fields. Entries such as `Chapter 1-67` are not matched as book numbers.
+The first adds series-level author, narrator, publisher, Audible series information, and match scores; it skips series with existing authors. The second matches book/volume numbers to Audible sequence numbers and adds chapter-level `audible_*` fields. Chapter ranges such as `Chapter 1-67` are not treated as book numbers.
 
-The author-only helper and the Audiobookshelf helpers are separate enrichment paths: the Audiobookshelf series helper reads the original full catalog, not the author-only output.
+**These are separate enrichment paths:** the Audiobookshelf series helper reads the original full catalog, not the author-only output.
 
-Download with enriched book names and the library layout:
+Preview enriched book naming:
 
 ```bash
 python3 -u download_novelsound_series.py.py \
@@ -236,15 +204,20 @@ python3 -u download_novelsound_series.py.py \
   --dry-run
 ```
 
-Review the planned paths, then remove `--dry-run` to download. Switching catalogs or layouts can change destination filenames, so the selected-series downloader may download files again if the new paths do not already exist.
+Remove `--dry-run` after reviewing paths. Changing catalogs or layouts may change filenames and cause the selected-series downloader to download entries again.
 
-## Help and troubleshooting
+## Troubleshooting
 
-- For downloader usage, run `python3 SCRIPT_NAME --help`. The fetch and enrichment scripts do not implement `--help`.
-- `KeyError: 'NOVELSOUND_TOKEN'`: set the environment variable before fetching the catalog.
-- `ModuleNotFoundError: requests`: activate the virtual environment and install `requests` there.
-- No audio jobs: use the full catalog rather than the simplified JSON/CSV exports.
-- Already completed entries skipped on a new drive: this is expected when using the same manifest.
-- Existing files on another drive downloaded again: confirm you are using the original database and have bootstrapped any older unrecorded files.
-- More concurrency: increase both `--workers` and `--series-workers` for the bulk downloaders. Increasing only `--workers` above 3 leaves the default series limit at 3.
-- To inspect manifest download failures live, add `--debug` or watch the log with `tail -f download_failures.log` (use your configured log path).
+| Symptom | What to check |
+| --- | --- |
+| `KeyError: 'NOVELSOUND_TOKEN'` | Export the authorization value before fetching. |
+| `ModuleNotFoundError: requests` | Activate `.venv` and install `requests`. |
+| No audio download jobs | Use `novelsound_full.json`, not the simplified exports. |
+| New drive skips completed entries | Expected when using the same manifest. |
+| Files on another drive download again | Use the original manifest; bootstrap older files that were not recorded. |
+| Need more parallel series | Increase both `--workers` and `--series-workers`. |
+| Need failure details | Add `--debug` or run `tail -f PATH_TO_DOWNLOAD_FAILURES_LOG`. |
+
+For downloader flags, run `python3 SCRIPT_NAME --help`. The catalog fetcher and enrichment helpers do not implement `--help`.
+
+> **Related:** `fullAudioBooks/` is a separate FullAudioBooks workflow. Older script names may appear in notes (`better_crawler.py`, `novelsound_download.py`, `download_all_manifest.py`); the names above are the current ones.
