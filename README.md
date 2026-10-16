@@ -1,6 +1,6 @@
 # NovelSound Auto Downloader
 
-Fetch the NovelSound catalog, download audio, track completed downloads across drives, and optionally enrich titles with author and Audible metadata.
+Fetch the NovelSound catalog, download audio, track completed downloads across drives, and optionally enrich titles with author and Audible metadata. Requires that you have the required subscription to download files.
 
 ## Quick start
 
